@@ -1,0 +1,138 @@
+#Transforming data
+#pip install pyarrow
+#import pyarrow.parquet as pq
+#import pandas as pd
+#parquet_file = pq.read_table('/Users/edwardhong/Documents/French trot/trots_2013-2022.parquet')
+#df = parquet_file.to_pandas()
+#df.to_csv('/Users/edwardhong/Documents/French trot/trots_2013-2022.csv', index=False)
+
+#Imoirting data
+import pandas as pd
+from sklearn.model_selection import GroupShuffleSplit
+import numpy as np
+df = pd.read_csv('/Users/edwardhong/Documents/French trot/trots_2.csv')
+df=df.astype('float64')
+gss = GroupShuffleSplit(test_size=.40, n_splits=1, random_state=7).split(df, groups=df['RaceID'])
+
+# Generating training and testing sets
+X_train_inds, X_test_inds = next(gss)
+train_data= df.iloc[X_train_inds]
+X_train = train_data.loc[:, ~train_data.columns.isin(['RaceID','FinishPosition'])]
+y_train = train_data.loc[:, train_data.columns.isin(['FinishPosition'])]
+groups = train_data.groupby('RaceID').size().to_frame('size')['size'].to_numpy()
+test_data= df.iloc[X_test_inds]
+X_test = test_data.loc[:, ~test_data.columns.isin(['FinishPosition'])]
+y_test = test_data.loc[:, test_data.columns.isin(['FinishPosition','RaceID'])]
+
+#Configure and fit the model
+import xgboost as xgb
+evals_result = {}
+model = xgb.XGBRanker(  
+    tree_method='auto',
+    booster='gbtree',
+    objective='rank:ndcg',
+    random_state=42, 
+    eval_metric=['ndcg', 'map@5-'],
+    learning_rate=0.1,
+    colsample_bytree=0.9, 
+    eta=0.05, 
+    max_depth=6, 
+    n_estimators=110, 
+    subsample=0.75 
+    )
+
+model.fit(X_train, y_train, group=groups,  verbose=True)
+
+# The model makes predictions on the test set
+def predict(model, df):
+    return model.predict(df.loc[:, ~df.columns.isin(['RaceID'])])
+
+predictions = (X_test.groupby('RaceID')
+               .apply(lambda x: predict(model, x)))
+
+#Show important features of the model
+from xgboost import plot_importance
+plot_importance(model)
+
+
+# Performance evaluation of predictions on the test set
+import numpy as np
+def dcg_at_k(r, k):
+    r = np.asfarray(r)[:k]
+    if r.size:
+        return np.sum(np.subtract(np.power(2, r), 1) / np.log2(np.arange(2, r.size + 2)))
+    return 0.
+
+def ndcg_at_k(r, k):
+    idcg = dcg_at_k(sorted(r, reverse=True), k)
+    if not idcg:
+        return 0.
+    return dcg_at_k(r, k) / idcg
+
+predictions.apply(lambda x: ndcg_at_k(x, 10)).mean()  #平均性能
+
+
+#Comparative evaluation of the prediction of the test set X_test and the true value of y_test
+qids = np.unique(y_test['RaceID']) #取y_test的所有唯一组号
+
+#Define ndcg functions for prediction and validation
+def ndcg(y_score, y_true, k):
+    order = np.argsort(y_score)[::-1]
+    y_true = np.take(y_true, order[:k])
+
+    gain = 2 ** y_true - 1
+
+    discounts = np.log2(np.arange(len(y_true)) + 2)
+    return np.sum(gain / discounts)
+
+def to_array(data):
+    y1 = np.array(data)
+
+    i = 0
+    y2 = []
+    while i < len(y1):
+        y2.append(y1[i][0])
+        i+=1
+    return np.array(y2)
+
+#ndcg_ 
+ndcg_ = list()
+
+for i, qid in enumerate(qids):
+    y = y_test[y_test['RaceID'] == qid]
+
+    if  y['FinishPosition'].sum() == 0  :
+        continue
+    
+    p = model.predict(X_test[X_test['RaceID'] == qid].drop('RaceID',axis=1))
+
+    idcg = ndcg( to_array(y), to_array(y), k=10)
+    idcg = ndcg(  y['FinishPosition'],  y['FinishPosition'], k=10)
+    ndcg_.append(ndcg(p, to_array(y), k=10) / idcg)
+
+np.mean(ndcg_) #平均性能
+
+#Model export
+import pickle
+import joblib
+#pickle.dump(model, open("D:\\Xgboost\\model.pkl", "wb")) 
+joblib.dump(model, "D:\\Xgboost\\model2.pkl")
+
+#Model import
+#model_horse =  pickle.load(open("D:\\Xgboost\\model.pkl","rb"))
+model_horse = joblib.load("D:\\Xgboost\\model2.pkl")
+
+#Model visualization
+from xgboost import plot_tree
+import matplotlib.pyplot as plt
+# plot
+#plot_tree(model_horse)
+plot_tree(model_horse, fmap='', num_trees=0, rankdir='UT', ax=None)
+plt.show()
+
+#Case prediction
+#p = model.predict(X_test[X_test['RaceID'] == 1596364].drop('RaceID',axis=1))
+X_query = X_test[ X_test['RaceID'] == 1596364]
+X_query = X_query.drop('RaceID',axis=1)
+y_pred = model.predict(X_query)
+y_pred
