@@ -69,11 +69,11 @@ def ndcg_at_k(r, k):
         return 0.
     return dcg_at_k(r, k) / idcg
 
-predictions.apply(lambda x: ndcg_at_k(x, 10)).mean()  #平均性能
+predictions.apply(lambda x: ndcg_at_k(x, 10)).mean()  #average performance
 
 
 #Comparative evaluation of the prediction of the test set X_test and the true value of y_test
-qids = np.unique(y_test['RaceID']) #取y_test的所有唯一组号
+qids = np.unique(y_test['RaceID']) #Get all unique group numbers of y_test
 
 #Define ndcg functions for prediction and validation
 def ndcg(y_score, y_true, k):
@@ -110,7 +110,7 @@ for i, qid in enumerate(qids):
     idcg = ndcg(  y['FinishPosition'],  y['FinishPosition'], k=10)
     ndcg_.append(ndcg(p, to_array(y), k=10) / idcg)
 
-np.mean(ndcg_) #平均性能
+np.mean(ndcg_) #average performance
 
 #Model export
 import pickle
